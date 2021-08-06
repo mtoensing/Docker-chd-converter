@@ -1,4 +1,4 @@
-# Docker CHD Converter
+# Docker CHD "Compressed Hunks of Data" Converter
 Compress GDI, ISO and CUE files to CHD using chdman from Mame Tools. 
 
 * Skips existing chd files.
