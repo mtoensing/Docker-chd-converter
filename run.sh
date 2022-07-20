@@ -1,4 +1,5 @@
 docker run \
   --rm \
   -v $(pwd)/images/:/tmp/images/:rw \
-  -it marctv/chd-converter
+  -it --platform linux/amd64 marctv/chd-converter \
+

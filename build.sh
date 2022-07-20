@@ -1,1 +1,1 @@
-docker build -t marctv/chd-converter .
+docker build --platform amd64 -t marctv/chd-converter .
