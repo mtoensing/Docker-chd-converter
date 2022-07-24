@@ -1,6 +1,6 @@
 FROM debian:bullseye-slim
 
-RUN apt-get update && apt-get install -y mame-tools 
+RUN apt-get update && apt -y --no-install-recommends install mame-tools
 
 WORKDIR /tmp/images
 
