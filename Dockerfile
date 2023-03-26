@@ -1,4 +1,4 @@
-FROM debian:bullseye-slim
+FROM debian:sid-slim
 
 RUN apt-get update && apt -y --no-install-recommends install mame-tools
 
