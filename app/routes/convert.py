@@ -192,36 +192,41 @@ async def job_events():
         # Create a queue to receive all job updates
         queues = {}
 
-        while True:
-            try:
-                # Subscribe to any new jobs
-                for job in job_manager.get_all_jobs():
-                    if job.id not in queues and job.status in (JobStatus.QUEUED, JobStatus.PROCESSING):
-                        queues[job.id] = job_manager.subscribe(job.id)
+        try:
+            while True:
+                try:
+                    # Subscribe to any new jobs
+                    for job in job_manager.get_all_jobs():
+                        if job.id not in queues and job.status in (JobStatus.QUEUED, JobStatus.PROCESSING):
+                            queues[job.id] = job_manager.subscribe(job.id)
 
-                # Check all queues for updates
-                for job_id, queue in list(queues.items()):
-                    try:
-                        update = queue.get_nowait()
-                        yield {
-                            "event": update.get("type", "progress"),
-                            "data": json.dumps(update)
-                        }
+                    # Check all queues for updates
+                    for job_id, queue in list(queues.items()):
+                        try:
+                            update = queue.get_nowait()
+                            yield {
+                                "event": update.get("type", "progress"),
+                                "data": json.dumps(update)
+                            }
 
-                        # Unsubscribe if job is done
-                        if update.get("type") in ("complete", "error"):
-                            job_manager.unsubscribe(job_id, queue)
-                            del queues[job_id]
+                            # Unsubscribe if job is done
+                            if update.get("type") in ("complete", "error"):
+                                job_manager.unsubscribe(job_id, queue)
+                                del queues[job_id]
 
-                    except asyncio.QueueEmpty:
-                        pass
+                        except asyncio.QueueEmpty:
+                            pass
 
-                await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.1)
 
-            except Exception as e:
-                # Log error but keep the connection alive
-                print(f"SSE event generator error: {e}")
-                await asyncio.sleep(1)
+                except Exception as e:
+                    # Log error but keep the connection alive
+                    print(f"SSE event generator error: {e}")
+                    await asyncio.sleep(1)
+        finally:
+            # Clean up all subscriptions on client disconnect
+            for job_id, queue in queues.items():
+                job_manager.unsubscribe(job_id, queue)
 
     return EventSourceResponse(event_generator())
 
