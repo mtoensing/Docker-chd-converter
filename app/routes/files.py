@@ -13,42 +13,6 @@ from app.utils.path_utils import is_within_configured_volumes, get_volume_name_f
 
 router = APIRouter()
 
-    """Validate that a path is within configured volumes (prevent traversal)."""
-    try:
-        # Resolve the user-supplied path (do not require it to exist).
-        real_path = Path(path).resolve(strict=False)
-    except Exception:
-        # If the path cannot be resolved safely, treat it as invalid.
-        return False
-
-    for volume in settings.volumes:
-        try:
-            # Resolve the configured volume path; it should exist.
-            real_volume = Path(volume).resolve(strict=True)
-        except Exception:
-            # Skip misconfigured or non-existent volumes.
-            continue
-
-        # Prefer pathlib.Path.is_relative_to when available (Python 3.9+).
-        is_inside = False
-        try:
-            # is_relative_to returns True if real_path is within real_volume.
-            is_inside = real_path.is_relative_to(real_volume)
-        except AttributeError:
-            # Fallback for older Python versions: use os.path.commonpath.
-            real_path_str = str(real_path)
-            real_volume_str = str(real_volume)
-            try:
-                common = os.path.commonpath([real_path_str, real_volume_str])
-            except ValueError:
-                # Different drive letters on Windows, etc.
-                common = ""
-            is_inside = common == real_volume_str
-
-        if is_inside:
-            return True
-    return False
-
 
 @router.get("/volumes", response_model=List[Volume])
 async def list_volumes():

@@ -9,14 +9,6 @@ from app.utils.path_utils import is_within_configured_volumes
 
 router = APIRouter()
 
-    """Validate that a path is within configured volumes."""
-    real_path = os.path.realpath(path)
-    for volume in settings.volumes:
-        real_volume = os.path.realpath(volume)
-        if real_path.startswith(real_volume + os.sep) or real_path == real_volume:
-            return True
-    return False
-
 
 @router.get("/info", response_model=CHDInfo)
 async def get_chd_info(
