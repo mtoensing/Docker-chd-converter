@@ -1,7 +1,13 @@
 import fcntl
+import glob
+import logging
 import os
-from typing import Set
 import threading
+from typing import Set
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class LockManager:
@@ -62,7 +68,7 @@ class LockManager:
                 except (IOError, OSError) as e:
                     # Other error (permission denied, etc.)
                     lock_handle.close()
-                    print(f"Failed to acquire lock for {normalized_path}: {e}")
+                    logger.warning(f"Failed to acquire lock for {normalized_path}: {e}")
                     return False
                 
                 # Now that we have the lock, check if CHD already exists (atomic with lock)
@@ -94,9 +100,9 @@ class LockManager:
                         lock_handle.close()
                     except Exception:
                         pass
-                print(f"Failed to acquire lock for {normalized_path}: {e}")
+                logger.warning(f"Failed to acquire lock for {normalized_path}: {e}")
                 return False
-    
+
     def release_lock(self, output_path: str):
         """Release the lock for an output file path."""
         normalized_path = os.path.normpath(output_path)
@@ -112,7 +118,7 @@ class LockManager:
                         fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
                         lock_handle.close()
                     except Exception as e:
-                        print(f"Error releasing lock for {normalized_path}: {e}")
+                        logger.error(f"Error releasing lock for {normalized_path}: {e}")
                     finally:
                         del self._lock_handles[normalized_path]
                     
@@ -122,7 +128,36 @@ class LockManager:
                         if os.path.exists(lock_file_path):
                             os.remove(lock_file_path)
                     except Exception as e:
-                        print(f"Failed to remove lock file {lock_file_path}: {e}")
+                        logger.warning(f"Failed to remove lock file {lock_file_path}: {e}")
+
+    def cleanup_orphan_locks(self):
+        """
+        Clean up orphan .lock files from previous crashes.
+        Called on startup to ensure stale locks don't block conversions.
+        """
+        cleaned = 0
+        for volume in settings.volumes:
+            if not os.path.isdir(volume):
+                continue
+            # Find all .lock files recursively
+            pattern = os.path.join(volume, "**", "*.chd.lock")
+            for lock_file in glob.glob(pattern, recursive=True):
+                try:
+                    # Try to acquire the lock - if successful, it's orphaned
+                    with open(lock_file, 'a') as f:
+                        try:
+                            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            # Lock acquired - this is an orphan, remove it
+                            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                            os.remove(lock_file)
+                            cleaned += 1
+                            logger.info(f"Removed orphan lock file: {lock_file}")
+                        except BlockingIOError:
+                            # Lock is held by another process - leave it alone
+                            pass
+                except Exception as e:
+                    logger.warning(f"Error checking lock file {lock_file}: {e}")
+        return cleaned
 
 
 lock_manager = LockManager()

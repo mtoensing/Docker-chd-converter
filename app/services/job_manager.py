@@ -1,7 +1,8 @@
 import asyncio
-import uuid
+import logging
 import os
 import shutil
+import uuid
 from collections import OrderedDict
 from datetime import datetime
 from typing import Dict, List, Optional, Set
@@ -10,6 +11,8 @@ from app.models import ConversionJob, JobStatus, ConversionMode
 from app.services.chdman import chdman_service
 from app.services.lock_manager import lock_manager
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class JobManager:
@@ -131,7 +134,7 @@ class JobManager:
             except asyncio.TimeoutError:
                 pass
             except Exception as e:
-                print(f"Queue processor error: {e}")
+                logger.error(f"Queue processor error: {e}")
                 await asyncio.sleep(1)
 
     async def _process_job(self, job_id: str):
@@ -243,7 +246,7 @@ class JobManager:
                         shutil.rmtree(temp_dir, ignore_errors=True)
                     job.temp_dir = None
                 except Exception as cleanup_error:
-                    print(f"Failed to cleanup temp dir {temp_dir}: {cleanup_error}")
+                    logger.warning(f"Failed to cleanup temp dir {temp_dir}: {cleanup_error}")
 
 
 job_manager = JobManager(max_concurrent=settings.max_concurrent_jobs)

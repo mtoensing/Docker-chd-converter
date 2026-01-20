@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from pathlib import Path
 from typing import List, Optional
@@ -7,6 +8,8 @@ from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 from app.models import (
     ConversionJob, JobCreateRequest, BatchJobCreateRequest,
     JobStatus, DuplicateAction, CheckDuplicatesRequest, DuplicateInfo
@@ -221,7 +224,7 @@ async def job_events():
 
                 except Exception as e:
                     # Log error but keep the connection alive
-                    print(f"SSE event generator error: {e}")
+                    logger.error(f"SSE event generator error: {e}")
                     await asyncio.sleep(1)
         finally:
             # Clean up all subscriptions on client disconnect
@@ -308,7 +311,7 @@ async def job_progress(job_id: str):
                     yield {"event": "ping", "data": json.dumps({})}
 
         except Exception as e:
-            print(f"SSE job progress error: {e}")
+            logger.error(f"SSE job progress error: {e}")
         finally:
             job_manager.unsubscribe(job_id, queue)
 

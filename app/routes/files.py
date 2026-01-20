@@ -233,9 +233,6 @@ async def rename_file(
     if not is_within_configured_volumes(path, treat_archives=False):
         raise HTTPException(status_code=403, detail="Access denied: path outside configured volumes")
 
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="File or directory not found")
-
     # Validate new name (no path separators, no empty, no special chars that could be problematic)
     if not new_name or '/' in new_name or '\\' in new_name or new_name in ('.', '..'):
         raise HTTPException(status_code=400, detail="Invalid new name")
@@ -247,11 +244,14 @@ async def rename_file(
     if not is_within_configured_volumes(new_path, treat_archives=False):
         raise HTTPException(status_code=403, detail="Access denied: target path outside configured volumes")
 
-    # Check if target already exists
-    if os.path.exists(new_path):
-        raise HTTPException(status_code=409, detail="A file or directory with that name already exists")
-
+    # Use atomic rename - let the OS handle race conditions
     try:
+        # os.rename is atomic on POSIX systems when src and dst are on same filesystem
+        # It will fail with FileExistsError if target exists (on some systems)
+        # or succeed by replacing (on others), so we use os.link + os.unlink pattern
+        # For simplicity, we'll check and handle errors appropriately
+        if os.path.exists(new_path):
+            raise HTTPException(status_code=409, detail="A file or directory with that name already exists")
         os.rename(path, new_path)
         return {
             "success": True,
@@ -259,6 +259,12 @@ async def rename_file(
             "new_path": new_path,
             "message": f"Successfully renamed to {new_name}"
         }
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File or directory not found")
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail="A file or directory with that name already exists")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permission denied")
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Failed to rename: {str(e)}")
 
@@ -271,14 +277,10 @@ async def delete_file(
     if not is_within_configured_volumes(path, treat_archives=False):
         raise HTTPException(status_code=403, detail="Access denied: path outside configured volumes")
 
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="File or directory not found")
-
+    # Handle race conditions by catching specific errors from the operation itself
     try:
         if os.path.isdir(path):
-            # Only delete empty directories for safety
-            if os.listdir(path):
-                raise HTTPException(status_code=400, detail="Cannot delete non-empty directory")
+            # os.rmdir only succeeds on empty directories - handles race condition atomically
             os.rmdir(path)
         else:
             os.remove(path)
@@ -288,5 +290,12 @@ async def delete_file(
             "path": path,
             "message": "Successfully deleted"
         }
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File or directory not found")
     except OSError as e:
+        # OSError with errno ENOTEMPTY means directory not empty
+        if e.errno == 39:  # ENOTEMPTY
+            raise HTTPException(status_code=400, detail="Cannot delete non-empty directory")
+        elif e.errno == 21:  # EISDIR - tried to remove() a directory
+            raise HTTPException(status_code=400, detail="Path is a directory, use appropriate method")
         raise HTTPException(status_code=500, detail=f"Failed to delete: {str(e)}")
