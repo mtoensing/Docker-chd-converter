@@ -124,6 +124,72 @@ function Breadcrumb({ path, volume, onNavigate }) {
 
 function FileList({ entries, selectedFiles, onNavigate, onToggleSelect, onShowInfo, onBrowseArchive, onRename, onDelete, onVerify, verifiedCHDs, error }) {
     const [verifyingPath, setVerifyingPath] = useState(null);
+    const [expandedArchives, setExpandedArchives] = useState(new Set());
+    const [loadingArchives, setLoadingArchives] = useState(new Set());
+    const [archiveContents, setArchiveContents] = useState(new Map());
+
+    // Auto-expand archives that have convertible contents on mount/update
+    useEffect(() => {
+        if (!entries) return;
+        const archivesWithContent = entries
+            .filter(e => e.type === 'archive' && e.has_convertible_contents)
+            .map(e => e.path);
+
+        // Auto-expand new archives with content
+        archivesWithContent.forEach(path => {
+            if (!expandedArchives.has(path) && !archiveContents.has(path) && !loadingArchives.has(path)) {
+                loadArchiveContents(path);
+            }
+        });
+    }, [entries]);
+
+    const loadArchiveContents = async (archivePath) => {
+        setLoadingArchives(prev => new Set([...prev, archivePath]));
+        setExpandedArchives(prev => new Set([...prev, archivePath]));
+
+        try {
+            const data = await api.listArchive(archivePath);
+            if (data && data.files) {
+                const contents = data.files.map(file => ({
+                    name: file.name,
+                    path: `${archivePath}::${file.internal_path}`,
+                    type: 'file',
+                    size: file.size,
+                    extension: file.extension,
+                    convertible: file.convertible,
+                    has_chd: file.has_chd || false,
+                    is_archive_item: true,
+                    archive_path: archivePath
+                }));
+                setArchiveContents(prev => new Map([...prev, [archivePath, contents]]));
+            }
+        } catch (err) {
+            console.error('Failed to load archive contents:', err);
+        } finally {
+            setLoadingArchives(prev => {
+                const next = new Set(prev);
+                next.delete(archivePath);
+                return next;
+            });
+        }
+    };
+
+    const toggleArchive = (archivePath, e) => {
+        e.stopPropagation();
+        if (expandedArchives.has(archivePath)) {
+            setExpandedArchives(prev => {
+                const next = new Set(prev);
+                next.delete(archivePath);
+                return next;
+            });
+        } else {
+            if (!archiveContents.has(archivePath)) {
+                loadArchiveContents(archivePath);
+            } else {
+                setExpandedArchives(prev => new Set([...prev, archivePath]));
+            }
+        }
+    };
 
     if (error) {
         return html`
@@ -149,8 +215,8 @@ function FileList({ entries, selectedFiles, onNavigate, onToggleSelect, onShowIn
         if (entry.type === 'directory') {
             onNavigate(entry.path);
         } else if (entry.type === 'archive') {
-            // For archives, browse contents
-            onBrowseArchive && onBrowseArchive(entry.path);
+            // Toggle archive expansion
+            toggleArchive(entry.path, e);
         } else if (entry.extension === '.chd') {
             onShowInfo(entry.path);
         } else if (entry.convertible) {
@@ -170,7 +236,12 @@ function FileList({ entries, selectedFiles, onNavigate, onToggleSelect, onShowIn
 
     const getTooltip = (entry) => {
         if (entry.type === 'directory') return `Open folder: ${entry.name}`;
-        if (entry.type === 'archive') return `Archive: ${entry.name} - Click to browse contents`;
+        if (entry.type === 'archive') {
+            if (entry.has_convertible_contents) {
+                return `Archive: ${entry.name} - ${entry.convertible_count} convertible file(s) - Click to expand/collapse`;
+            }
+            return `Archive: ${entry.name} - No convertible files`;
+        }
         if (entry.extension === '.chd') return 'Click to view CHD info';
         if (entry.convertible) return entry.has_chd ? 'Already converted' : 'Click to select for conversion';
         return entry.name;
@@ -179,16 +250,52 @@ function FileList({ entries, selectedFiles, onNavigate, onToggleSelect, onShowIn
     const isVerified = (entry) => entry.extension === '.chd' && verifiedCHDs && verifiedCHDs.has(entry.path);
     const isArchiveItem = (entry) => entry.is_archive_item;
 
+    const renderNestedEntry = (entry) => html`
+        <li
+            key=${entry.path}
+            class="file-item nested-item ${selectedFiles.has(entry.path) ? 'selected' : ''}"
+            onClick=${(e) => { e.stopPropagation(); if (entry.convertible && !entry.has_chd) onToggleSelect(entry); }}
+            title=${entry.has_chd ? 'CHD already exists' : 'Click to select for conversion'}
+        >
+            ${entry.convertible && !entry.has_chd && html`
+                <input
+                    type="checkbox"
+                    class="checkbox"
+                    checked=${selectedFiles.has(entry.path)}
+                    onClick=${(e) => { e.stopPropagation(); onToggleSelect(entry); }}
+                />
+            `}
+            <span class="icon">${getFileIcon(entry)}</span>
+            <div class="info">
+                <div class="name">${entry.name}</div>
+                ${entry.size != null && html`
+                    <div class="meta">${formatSize(entry.size)}</div>
+                `}
+            </div>
+            ${entry.has_chd && html`
+                <span class="status has-chd" title="A CHD file already exists for this source">CHD exists</span>
+            `}
+            ${entry.convertible && !entry.has_chd && html`
+                <span class="status convertible" title="Can be converted to CHD">Convertible</span>
+            `}
+        </li>
+    `;
+
     return html`
         <ul class="file-list">
             ${entries.map(entry => html`
                 <li
                     key=${entry.path}
-                    class="file-item ${selectedFiles.has(entry.path) ? 'selected' : ''}"
+                    class="file-item ${selectedFiles.has(entry.path) ? 'selected' : ''} ${entry.type === 'archive' ? 'archive-item' : ''}"
                     onClick=${(e) => handleClick(entry, e)}
                     title=${getTooltip(entry)}
                 >
-                    ${entry.convertible && !entry.has_chd && html`
+                    ${entry.type === 'archive' && html`
+                        <span class="archive-toggle" onClick=${(e) => toggleArchive(entry.path, e)}>
+                            ${loadingArchives.has(entry.path) ? html`<span class="spinner-tiny"></span>` : expandedArchives.has(entry.path) ? '▼' : '▶'}
+                        </span>
+                    `}
+                    ${entry.convertible && !entry.has_chd && entry.type !== 'archive' && html`
                         <input
                             type="checkbox"
                             class="checkbox"
@@ -203,16 +310,24 @@ function FileList({ entries, selectedFiles, onNavigate, onToggleSelect, onShowIn
                             <div class="meta">${formatSize(entry.size)}</div>
                         `}
                     </div>
-                    ${entry.has_chd && html`
+                    ${entry.type === 'archive' && entry.has_convertible_contents && html`
+                        <span class="status archive-count" title="${entry.convertible_count} convertible file(s) inside">
+                            ${entry.convertible_count} file${entry.convertible_count !== 1 ? 's' : ''}
+                        </span>
+                    `}
+                    ${entry.type === 'archive' && !entry.has_convertible_contents && html`
+                        <span class="status no-content" title="No convertible files in this archive">Empty</span>
+                    `}
+                    ${entry.has_chd && entry.type !== 'archive' && html`
                         <span class="status has-chd" title="A CHD file already exists for this source">CHD exists</span>
                     `}
-                    ${entry.convertible && !entry.has_chd && html`
+                    ${entry.convertible && !entry.has_chd && entry.type !== 'archive' && html`
                         <span class="status convertible" title="Can be converted to CHD">Convertible</span>
                     `}
                     ${isVerified(entry) && html`
                         <span class="status verified" title="CHD integrity verified">✓ Verified</span>
                     `}
-                    ${!isArchiveItem(entry) && html`
+                    ${!isArchiveItem(entry) && entry.type !== 'archive' && html`
                         <div class="file-actions" onClick=${(e) => e.stopPropagation()}>
                             ${entry.extension === '.chd' && !isVerified(entry) && html`
                                 <button
@@ -241,6 +356,17 @@ function FileList({ entries, selectedFiles, onNavigate, onToggleSelect, onShowIn
                         </div>
                     `}
                 </li>
+                ${entry.type === 'archive' && expandedArchives.has(entry.path) && html`
+                    ${loadingArchives.has(entry.path) && html`
+                        <li class="archive-loading-item">
+                            <span class="spinner-tiny"></span>
+                            <span>Loading archive contents...</span>
+                        </li>
+                    `}
+                    ${!loadingArchives.has(entry.path) && archiveContents.has(entry.path) &&
+                        archiveContents.get(entry.path).map(nested => renderNestedEntry(nested))
+                    }
+                `}
             `)}
         </ul>
     `;
