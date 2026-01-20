@@ -15,10 +15,10 @@ from app.config import settings
 class JobManager:
     """Manages conversion job queue and execution."""
 
-    def __init__(self, max_concurrent: int = 2):
+    def __init__(self, max_concurrent: int = 1):
         self.jobs: OrderedDict[str, ConversionJob] = OrderedDict()
         self.max_concurrent = max_concurrent
-        self._processing_count = 0
+        self._semaphore: asyncio.Semaphore = asyncio.Semaphore(max_concurrent)
         self._queue: asyncio.Queue = asyncio.Queue()
         self._subscribers: Dict[str, List[asyncio.Queue]] = {}
         self._cancelled: Set[str] = set()
@@ -123,63 +123,62 @@ class JobManager:
         self._running = True
         while self._running:
             try:
-                # Check if we can process more jobs
-                if self._processing_count < self.max_concurrent:
-                    try:
-                        job_id = await asyncio.wait_for(self._queue.get(), timeout=1.0)
-                        asyncio.create_task(self._process_job(job_id))
-                    except asyncio.TimeoutError:
-                        pass
-                else:
-                    await asyncio.sleep(0.5)
+                # Wait for a job from the queue
+                job_id = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+                # Semaphore blocks here until a slot is available - bulletproof concurrency control
+                await self._semaphore.acquire()
+                asyncio.create_task(self._process_job(job_id))
+            except asyncio.TimeoutError:
+                pass
             except Exception as e:
                 print(f"Queue processor error: {e}")
                 await asyncio.sleep(1)
 
     async def _process_job(self, job_id: str):
         """Process a single conversion job."""
-        job = self.jobs.get(job_id)
-        if not job:
-            return
+        lock_acquired = False
+        job = None
+        try:
+            job = self.jobs.get(job_id)
+            if not job:
+                return
 
-        if job_id in self._cancelled:
-            self._cancelled.discard(job_id)
-            return
+            if job_id in self._cancelled:
+                self._cancelled.discard(job_id)
+                return
 
-        # Try to acquire lock for the output file (prevents race conditions)
-        lock_acquired = lock_manager.acquire_lock(job.output_path)
-        if not lock_acquired:
-            # Could not acquire lock - either file exists or is being converted
-            # Check current status to provide better error message
-            file_exists, is_locked = lock_manager.check_file_status(job.output_path)
-            job.status = JobStatus.FAILED
-            if is_locked:
-                job.error_message = "Another job is already converting to this output file"
-            elif file_exists:
-                job.error_message = "Output CHD file already exists"
-            else:
-                job.error_message = "Could not acquire lock for output file"
-            job.completed_at = datetime.utcnow()
+            # Try to acquire lock for the output file (prevents race conditions)
+            lock_acquired = lock_manager.acquire_lock(job.output_path)
+            if not lock_acquired:
+                # Could not acquire lock - either file exists or is being converted
+                # Check current status to provide better error message
+                file_exists, is_locked = lock_manager.check_file_status(job.output_path)
+                job.status = JobStatus.FAILED
+                if is_locked:
+                    job.error_message = "Another job is already converting to this output file"
+                elif file_exists:
+                    job.error_message = "Output CHD file already exists"
+                else:
+                    job.error_message = "Could not acquire lock for output file"
+                job.completed_at = datetime.utcnow()
+
+                await self._notify_subscribers(job_id, {
+                    "type": "error",
+                    "job_id": job_id,
+                    "error": job.error_message
+                })
+                return
+
+            job.status = JobStatus.PROCESSING
+            job.started_at = datetime.utcnow()
 
             await self._notify_subscribers(job_id, {
-                "type": "error",
+                "type": "status",
                 "job_id": job_id,
-                "error": job.error_message
+                "status": job.status.value,
+                "progress": 0
             })
-            return
 
-        self._processing_count += 1
-        job.status = JobStatus.PROCESSING
-        job.started_at = datetime.utcnow()
-
-        await self._notify_subscribers(job_id, {
-            "type": "status",
-            "job_id": job_id,
-            "status": job.status.value,
-            "progress": 0
-        })
-
-        try:
             async for update in chdman_service.convert(
                 job.file_path,
                 job.output_path,
@@ -217,9 +216,10 @@ class JobManager:
                 })
 
         except Exception as e:
-            job.status = JobStatus.FAILED
-            job.error_message = str(e)
-            job.completed_at = datetime.utcnow()
+            if job:
+                job.status = JobStatus.FAILED
+                job.error_message = str(e)
+                job.completed_at = datetime.utcnow()
 
             await self._notify_subscribers(job_id, {
                 "type": "error",
@@ -228,13 +228,15 @@ class JobManager:
             })
 
         finally:
+            # Always release semaphore - this is critical for queue processing
+            self._semaphore.release()
+
             # Only release lock if we acquired it
             if lock_acquired:
                 lock_manager.release_lock(job.output_path)
-            self._processing_count -= 1
 
             # Clean up temp directory if this was an archive extraction
-            if job.temp_dir:
+            if job and job.temp_dir:
                 temp_dir = job.temp_dir
                 try:
                     if temp_dir and os.path.isdir(temp_dir):

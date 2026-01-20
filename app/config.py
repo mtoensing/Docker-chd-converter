@@ -8,8 +8,8 @@ class Settings(BaseSettings):
     # Volume configuration (comma-separated paths)
     chd_volumes: str = Field(default="/data/games", alias="CHD_VOLUMES")
 
-    # Job limits
-    max_concurrent_jobs: int = Field(default=2, alias="MAX_CONCURRENT_JOBS")
+    # Job limits - WARNING: Values > 1 may cause system instability
+    max_concurrent_jobs: int = Field(default=1, alias="MAX_CONCURRENT_JOBS")
 
     # chdman binary path
     chdman_path: str = Field(default="/usr/bin/chdman", alias="CHDMAN_PATH")
