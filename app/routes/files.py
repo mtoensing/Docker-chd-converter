@@ -104,6 +104,17 @@ async def list_files(
                     file_exists, is_converting = lock_manager.check_file_status(chd_path)
                     has_chd = file_exists or is_converting
 
+                # For archives, check if they contain convertible files
+                has_convertible_contents = False
+                convertible_count = 0
+                if is_archive:
+                    try:
+                        archive_contents = archive_service.list_archive_contents(item_path)
+                        convertible_count = len(archive_contents)
+                        has_convertible_contents = convertible_count > 0
+                    except Exception:
+                        pass  # If we can't read the archive, just show it without the indicator
+
                 entry = FileEntry(
                     name=item,
                     path=item_path,
@@ -111,7 +122,9 @@ async def list_files(
                     size=size,
                     extension=ext,
                     convertible=is_convertible,
-                    has_chd=has_chd
+                    has_chd=has_chd,
+                    has_convertible_contents=has_convertible_contents,
+                    convertible_count=convertible_count
                 )
                 entries.append(entry)
 

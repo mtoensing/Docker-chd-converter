@@ -26,11 +26,13 @@ class JobStatus(str, Enum):
 class FileEntry(BaseModel):
     name: str
     path: str
-    type: str  # "file" or "directory"
+    type: str  # "file", "directory", or "archive"
     size: Optional[int] = None
     extension: Optional[str] = None
     convertible: bool = False
     has_chd: bool = False
+    has_convertible_contents: bool = False  # For archives: contains convertible files
+    convertible_count: int = 0  # For archives: number of convertible files inside
 
 
 class DirectoryListing(BaseModel):
