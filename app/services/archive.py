@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 import tempfile
@@ -17,6 +18,7 @@ try:
 except ImportError:
     HAS_RAR = False
 
+logger = logging.getLogger(__name__)
 
 ARCHIVE_EXTENSIONS = {".zip", ".7z", ".rar"}
 CONVERTIBLE_EXTENSIONS = {".gdi", ".iso", ".cue", ".bin"}
@@ -46,7 +48,7 @@ class ArchiveService:
             elif ext == ".rar" and HAS_RAR:
                 entries = self._list_rar(archive_path)
         except Exception as e:
-            print(f"Error listing archive {archive_path}: {e}")
+            logger.error(f"Error listing archive {archive_path}: {e}")
 
         return entries
 
