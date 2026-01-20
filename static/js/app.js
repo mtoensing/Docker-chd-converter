@@ -211,12 +211,12 @@ function FileList({ entries, selectedFiles, onNavigate, onToggleSelect, onShowIn
         `;
     }
 
-    const handleClick = (entry, e) => {
+    const handleClick = (entry, _e) => {
         if (entry.type === 'directory') {
             onNavigate(entry.path);
         } else if (entry.type === 'archive') {
             // Toggle archive expansion
-            toggleArchive(entry.path, e);
+            toggleArchive(entry.path, _e);
         } else if (entry.extension === '.chd') {
             onShowInfo(entry.path);
         } else if (entry.convertible) {
@@ -849,7 +849,7 @@ function App() {
     const [selectedFiles, setSelectedFiles] = useState(new Map());
     const [jobs, setJobs] = useState([]);
     const [creatingJobs, setCreatingJobs] = useState([]);
-    const [hiddenJobIds, setHiddenJobIds] = useState(new Set());
+    const [, setHiddenJobIds] = useState(new Set());
     const [loading, setLoading] = useState(false);
     const [conversionMode, setConversionMode] = useState('createcd');
     const [outputDir, setOutputDir] = useState('');
@@ -1013,9 +1013,6 @@ function App() {
         const mergeJobs = (serverJobs, currentJobs, currentHiddenIds) => {
             // Filter out hidden jobs from server response
             const visibleServerJobs = serverJobs.filter(j => !currentHiddenIds.has(j.id));
-
-            // Create a map of current jobs for quick lookup
-            const currentJobMap = new Map(currentJobs.map(j => [j.id, j]));
 
             // Merge: prefer server state but keep local jobs that aren't on server yet
             const mergedJobs = [];
